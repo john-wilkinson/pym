@@ -2,13 +2,14 @@ import os
 import shutil
 import errno
 import stat
-import package
 from git import Repo
+from . import package
 
 
 def make():
     return {
-        InstallCommand.COMMAND: InstallCommand,
+        InitCommand.COMMAND: InitCommand,
+        InstallCommand.COMMAND: InstallCommand
     }
 
 
@@ -22,32 +23,40 @@ class InstallCommand(object):
         subparser.add_argument('package', help='Package name (or git location)')
         subparser.add_argument('--save', help='Save the package to local config', action='store_true')
 
-    def __init__(self, config):
+    def __init__(self):
         self.installers = [
             GitInstaller
         ]
 
-        self.dest = config.get('install_location', 'packages')
+    def run(self, args, path):
+        current_package = self.fetch_current_package(path)
+        dest = current_package.load_config().get('install_location', 'packages')
 
-    def run(self, args):
         name = args['package']
         installer = self.find_installer(name)
         print('Installing {}'.format(name))
 
-        pym_package = installer.install(self.dest)
+        pym_package = installer.install(dest)
         try:
-            pym_package.config
+            pym_package.load_config()
         except package.PymPackageException:
             print('No pym config file found, creating...')
             creator = package.PymConfigCreator()
             src_guess = self.guess_src(pym_package)
-            print('Guessing source location: '.format(src_guess))
             config = creator.create(use_suggestions=True, name=pym_package.name, description=pym_package.description,
                                     version=pym_package.version, src=src_guess)
-            pym_package.config = config
-            print(config)
+            pym_package.save_config(config)
+            if args['save']:
+                print('Saving to {}'.format(current_package.name))
+                current_package.config['packages'][pym_package.name] = pym_package.version_range
+                current_package.save_config()
 
         print('Successfully installed {}!'.format(pym_package.name))
+
+    def fetch_current_package(self, path):
+        current_package = package.PymPackage(path)
+        current_package.path = path
+        return current_package
 
     def find_installer(self, package_name):
         pym_package = package.PymPackage(package_name)
@@ -99,5 +108,27 @@ class GitInstaller(object):
         repo = Repo.clone_from(self.pym_package.source, dest)
         self.pym_package.description = repo.description
         self.pym_package.version = str(repo.active_branch)
-        print(repo.active_branch)
+        self.pym_package.version_range = 'git+' + self.pym_package.reference
         return repo.working_dir
+
+
+class InitCommand(object):
+    COMMAND = 'init'
+
+    @classmethod
+    def args(cls, subparsers):
+        subparsers.add_parser(InitCommand.COMMAND, help='Initialize a pym project in the current directory',
+                                          epilog='Example: pym init')
+
+    def run(self, args, path):
+        current_package = package.PymPackage(path)
+        creator = package.PymConfigCreator({
+                'name': "Project name",
+                'description': "Project description",
+                'version': "Project version",
+                'license': 'License to use'
+            })
+        config = creator.create(use_suggestions=False, name=current_package.name, version='0.1.0', license='Unlicense')
+        current_package.save_config(config)
+        print('Initialized project')
+

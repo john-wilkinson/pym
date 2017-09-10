@@ -14,8 +14,11 @@ class PymLoader(object):
     def __init__(self, config=None):
         self.location = os.path.realpath(os.path.join(os.getcwd()))
         if not config:
-            with open(os.path.join(self.location, 'pym.json')) as data:
-                config = json.load(data)
+            try:
+                with open(os.path.join(self.location, 'pym.json')) as data:
+                    config = json.load(data)
+            except FileNotFoundError:
+                config = {}
 
         self.config = config
         self.dependency_dir = config.get('install_location', 'packages')
@@ -80,6 +83,3 @@ class PymLoader(object):
         m = imp.load_source(name, path)
 
         return m
-
-
-sys.meta_path.insert(0, PymLoader())

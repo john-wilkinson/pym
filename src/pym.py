@@ -1,9 +1,9 @@
 import os
 import sys
 import json
-import argparse
-import commands
-import package
+from . import argparse
+from . import commands
+from . import package
 
 
 class Pym(object):
@@ -12,13 +12,15 @@ class Pym(object):
         command_registry = commands.make()
         args = self.get_args(command_registry)
 
-        config = self.load_config()
-        cmd = command_registry[args['command']](config)
+        cmd = command_registry[args['command']]()
 
-        cmd.run(args)
+        location = os.path.realpath(os.path.join(os.getcwd()))
+
+        with PymCommandContext():
+            cmd.run(args, location)
 
     def get_args(self, command_registry):
-        parser = argparse.ArgumentParser(prog='pym.py', description='Manage Python packages.')
+        parser = argparse.ArgumentParser(prog='pym', description='Manage Python packages.')
         subparsers = parser.add_subparsers(help='pym sub-commands', dest='command')
 
         for _, cls in command_registry.items():
@@ -31,20 +33,21 @@ class Pym(object):
             sys.exit(2)
         return args
 
-    def load_config(self):
-        location = os.path.realpath(os.path.join(os.getcwd()))
 
-        project = package.PymPackage(location)
-        project.path = location
-        try:
-            config = project.config
-        except package.PymPackageException as e:
-            print(str(e))
+class PymCommandContext(object):
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type == package.PymPackageException:
+            print(str(exc_val))
             print("Run 'pym init' to create a project here")
             sys.exit(2)
 
-        return config
+
+def go():
+    (Pym()).run()
 
 
 if __name__ == "__main__":
-    (Pym()).run()
+    go()

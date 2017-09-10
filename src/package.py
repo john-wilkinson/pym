@@ -11,33 +11,33 @@ class PymPackageException(Exception):
 class PymPackage(object):
     def __init__(self, reference):
         self.reference = reference
+        self.path = reference
         self.source, _, self.version = self.reference.partition('@')
         self.name = os.path.splitext(os.path.basename(self.source))[0]
 
         self.config_filename = 'pym.json'
 
-        self.path = None
+        self.version_range = None
         self.description = None
-        self._config = None
+        self.config = None
 
-    @property
-    def config(self):
-        if self._config:
-            return self._config
+    def load_config(self, force=False):
+        if self.config and not force:
+            return self.config
 
         try:
             with open(self.config_path) as data:
-                config = json.load(data)
+                self.config = json.load(data)
         except FileNotFoundError:
-            raise PymPackageException('Failed to find {} in {}'.format(self.config_filename, self.source))
+            raise PymPackageException('Failed to find {} in {}'.format(self.config_filename, self.path))
 
-        return config
+        return self.config
 
-    @config.setter
-    def config(self, val):
-        self._config = val
+    def save_config(self, config=None):
+        if config is not None:
+            self.config = config
         with open(self.config_path, "w") as f:
-            f.write(json.dumps(val, indent=4))
+            f.write(json.dumps(self.config, indent=4))
 
     @property
     def config_path(self):
@@ -45,6 +45,13 @@ class PymPackage(object):
 
 
 class PymConfigCreator(object):
+    DEFAULT_CONFIG = {
+        'name': '',
+        'version': '',
+        'description': '',
+        'packages': {}
+    }
+
     def __init__(self, required_fields=None):
         if required_fields is None:
             required_fields = {
@@ -64,7 +71,8 @@ class PymConfigCreator(object):
                 value = suggestion
             else:
                 question = "{} ({})? ".format(desc, suggestion) if suggestion else "{}? ".format(desc)
-                value = input(question)
+                value = input(question) or suggestion or ""
             config[field] = value
 
+        config = {**PymConfigCreator.DEFAULT_CONFIG, **config}
         return config
