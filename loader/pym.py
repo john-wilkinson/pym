@@ -21,7 +21,7 @@ class PymLoader(object):
                 config = {}
 
         self.config = config
-        self.dependency_dir = config.get('install_location', 'packages')
+        self.dependency_dir = config.get('install_location', 'pym_packages')
 
         self.loaded = {}
 

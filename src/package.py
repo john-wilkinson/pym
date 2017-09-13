@@ -8,71 +8,102 @@ class PymPackageException(Exception):
     """
 
 
-class PymPackage(object):
-    def __init__(self, reference):
-        self.reference = reference
-        self.path = reference
-        self.source, _, self.version = self.reference.partition('@')
-        self.name = os.path.splitext(os.path.basename(self.source))[0]
-
-        self.config_filename = 'pym.json'
-
-        self.version_range = None
-        self.description = None
-        self.config = None
-
-    def load_config(self, force=False):
-        if self.config and not force:
-            return self.config
-
-        try:
-            with open(self.config_path) as data:
-                self.config = json.load(data)
-        except FileNotFoundError:
-            raise PymPackageException('Failed to find {} in {}'.format(self.config_filename, self.path))
-
-        return self.config
-
-    def save_config(self, config=None):
-        if config is not None:
-            self.config = config
-        with open(self.config_path, "w") as f:
-            f.write(json.dumps(self.config, indent=4))
-
-    @property
-    def config_path(self):
-        return os.path.join(self.path, self.config_filename)
+DEFAULT_VALUES = {
+    'install_location': 'pym_packages'
+}
 
 
-class PymConfigCreator(object):
-    DEFAULT_CONFIG = {
-        'name': '',
-        'version': '',
-        'description': '',
-        'packages': {}
+DEFAULT_CONFIG = {
+    'name': '',
+    'version': '0.1.0',
+    'description': '',
+    'src': 'src',
+    'license': 'MIT',
+    'dependencies': {},
+}
+
+
+class PymConfigBuilder(object):
+    FIELDS = {
+        'name': "Project name",
+        'description': "Project description",
+        'version': "Project version",
+        'src': "Project source sub-directory (ex: 'src')",
+        'license': "Project license (ex: MIT, GPLv2, etc)"
     }
 
-    def __init__(self, required_fields=None):
-        if required_fields is None:
-            required_fields = {
-                'name': "Project name",
-                'description': "Project description",
-                'version': "Project version",
-                'src': "Project source location"
-            }
-        self.required_fields = required_fields
+    def __init__(self, cli=None):
+        self.cli = cli
 
-    def create(self, use_suggestions=False, **suggestions):
-        config = {}
-
-        for field, desc in self.required_fields.items():
-            suggestion = suggestions.get(field)
-            if use_suggestions and suggestion:
-                value = suggestion
-            else:
-                question = "{} ({})? ".format(desc, suggestion) if suggestion else "{}? ".format(desc)
-                value = input(question) or suggestion or ""
-            config[field] = value
-
-        config = {**PymConfigCreator.DEFAULT_CONFIG, **config}
+    def build(self, values):
+        config = {key: values.get(key) or val for key, val in DEFAULT_CONFIG.items()}
         return config
+
+    def query(self, suggestions):
+        values = {}
+
+        for field, desc in PymConfigBuilder.FIELDS.items():
+            suggestion = suggestions.get(field)
+            question = "{} ({})? ".format(desc, suggestion) if suggestion else "{}? ".format(desc)
+            values[field] = self.cli.ask(question) or suggestion or ""
+
+        return self.build(values)
+
+
+class PackageInfo(dict):
+    def __getattr__(self, item):
+        return self[item]
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+    @classmethod
+    def parse(cls, reference, delim='@'):
+        source, _, version = reference.partition(delim)
+        name = os.path.splitext(os.path.basename(source))[0]
+        return PackageInfo(
+            reference=reference,
+            name=name,
+            version=version,
+            source=source
+        )
+
+    @staticmethod
+    def guess_src(info, suffixes=None):
+        suffixes = suffixes or ['src', info.name]
+        for suffix in suffixes:
+            guess = os.path.join(info.path, suffix)
+            if os.path.exists(guess):
+                return os.path.relpath(guess, info.path)
+
+        return None
+
+
+class PymPackage(object):
+    def __init__(self, location, config):
+        self.location = location
+        self.config = config
+
+    def __getitem__(self, item):
+        return self.config[item]
+
+    def __setitem__(self, key, value):
+        self.config[key] = value
+
+    def save(self):
+        with open(PymPackage.config_path(self.location), "w") as f:
+            f.write(json.dumps(self.config, indent=4))
+
+    @classmethod
+    def load(cls, location):
+        path = PymPackage.config_path(location)
+        try:
+            with open(path) as data:
+                config = json.load(data)
+                return PymPackage(location, {**DEFAULT_VALUES, **config})
+        except FileNotFoundError as e:
+            raise PymPackageException('Failed to find load config file {}'.format(path)) from e
+
+    @staticmethod
+    def config_path(location):
+        return os.path.join(location, 'pym.json')

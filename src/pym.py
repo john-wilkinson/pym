@@ -1,22 +1,26 @@
 import os
 import sys
 import json
-from . import argparse
+import argparse
 from . import commands
 from . import package
+from . import cli
 
 
-class Pym(object):
+class PymApp(object):
+
+    def __init__(self, cli):
+        self.cli = cli
 
     def run(self):
         command_registry = commands.make()
         args = self.get_args(command_registry)
 
-        cmd = command_registry[args['command']]()
+        cmd = command_registry[args['command']](self.cli)
 
         location = os.path.realpath(os.path.join(os.getcwd()))
 
-        with PymCommandContext():
+        with PymCommandContext(self.cli):
             cmd.run(args, location)
 
     def get_args(self, command_registry):
@@ -35,18 +39,21 @@ class Pym(object):
 
 
 class PymCommandContext(object):
+    def __init__(self, cli):
+        self.cli = cli
+
     def __enter__(self):
         pass
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type == package.PymPackageException:
-            print(str(exc_val))
-            print("Run 'pym init' to create a project here")
+            self.cli.error(str(exc_val))
+            self.cli.action("Run 'pym init' to create a project here")
             sys.exit(2)
 
 
 def go():
-    (Pym()).run()
+    (PymApp(cli.make())).run()
 
 
 if __name__ == "__main__":
