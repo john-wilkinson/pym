@@ -9,6 +9,7 @@ class PymPackageException(Exception):
 
 
 DEFAULT_VALUES = {
+    'staging_location': os.path.join('pym_packages', '.staging'),
     'install_location': 'pym_packages'
 }
 

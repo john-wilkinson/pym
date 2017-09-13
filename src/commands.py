@@ -4,7 +4,7 @@ import errno
 import stat
 import sys
 import inspect
-from git import Repo
+from git import Repo, exc
 from .package import PymPackage, PymConfigBuilder, PackageInfo, PymPackageException
 
 
@@ -18,6 +18,12 @@ def make():
 class InstallerNotFoundException(Exception):
     """
     Raised when an installer cannot be found for the specified source
+    """
+
+
+class VersionNotFoundException(Exception):
+    """
+    Raised when the specified version cannot be found
     """
 
 
@@ -78,7 +84,7 @@ class InstallCommand(PymCommand):
     def run(self, args, path):
         project = PymPackage.load(path)
 
-        dest = os.path.join(path, project['install_location'])
+        dest = os.path.join(path, project['staging_location'])
         reference = args['package']
 
         installer = self.find_installer(reference)
@@ -93,21 +99,29 @@ class InstallCommand(PymCommand):
             new_package = self.create_package(info)
             new_package.save()
 
+        self.unstage(project, new_package)
         if args['save']:
             self.cli.info('Saving to {}'.format(project['name']))
-            project['dependencies'][info.name] = info.version_range
+            project['dependencies'][new_package['name']] = info.version_range
             project.save()
         self.cli.success('Successfully installed {}!'.format(new_package['name']))
+
+    def unstage(self, project, pkg):
+        dest = os.path.join(project.location, project['install_location'], pkg['name'])
+        src = pkg.location
+        self.cli.info('Moving {src} to {dest}'.format(src=src, dest=dest))
+        shutil.rmtree(dest)
+        shutil.move(src, dest)
 
     def find_installer(self, reference):
         try:
             cls = next(i for i in self.installers if i.can_install(reference))
-            return cls()
+            return cls(self.cli)
         except StopIteration as e:
             raise InstallerNotFoundException('Failed to find an installer for {}'.format(reference)) from e
 
     def create_package(self, info):
-        builder = PymConfigBuilder()
+        builder = PymConfigBuilder(self.cli)
         info.src = PackageInfo.guess_src(info)
 
         if info.src:
@@ -121,16 +135,27 @@ class InstallCommand(PymCommand):
 
 class GitInstaller(object):
     @classmethod
-    def can_install(cls, source):
+    def can_install(cls, reference):
+        source, _, _ = reference.partition('#')
         return source.endswith('.git')
+
+    def __init__(self, cli):
+        self.cli = cli
 
     def install(self, reference, dest):
         info = PackageInfo.parse(reference, delim='#')
-        repo = self.clone(info.source, os.path.join(dest, info.name))
+        repo = self.clone(info.source, os.path.join(dest, info.name), info.version)
+        try:
+            version = str(repo.active_branch)
+        except TypeError:
+            # GitPython raises a TypeError on a detached HEAD state-- which is every time a tag is used
+            # We'll just default to what we parsed
+            version = info.version
+
         info.update({
             'path': repo.working_dir,
             'description': repo.description,
-            'version': str(repo.active_branch),
+            'version': version,
             'version_range': 'git+' + reference
         })
         self.remove_git(info.path)
@@ -148,8 +173,16 @@ class GitInstaller(object):
         git_dir = os.path.join(path, '.git')
         shutil.rmtree(git_dir, ignore_errors=False, onerror=handle_readonly)
 
-    def clone(self, source, dest):
-        return Repo.clone_from(source, dest)
+    def clone(self, source, dest, version):
+        repo = Repo.clone_from(source, dest)
+        if version:
+            self.cli.info("Checking out {version}...".format(version=version))
+            try:
+                git = repo.git
+                git.checkout(version)
+            except exc.GitCommandError as e:
+                raise VersionNotFoundException('Failed to find version {version}'.format(version=version)) from e
+        return repo
 
 
 class InitCommand(PymCommand):
