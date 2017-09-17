@@ -5,27 +5,43 @@ import stat
 import sys
 import inspect
 import itertools
-from git import Repo, exc
-from .package import PymPackage, PymConfigBuilder, PackageInfo, PymPackageException
+
+from . import exceptions
+from . import package
 
 
-def make():
-    return {
-        InitCommand.COMMAND: InitCommand,
-        InstallCommand.COMMAND: InstallCommand
-    }
+class CommandRegistry(object):
+    def __init__(self):
+        from .install import InstallCommand, UninstallCommand
 
+        self.commands = {
+            InitCommand.COMMAND: InitCommand,
+            InstallCommand.COMMAND: InstallCommand,
+            UninstallCommand.COMMAND: UninstallCommand
+        }
 
-class InstallerNotFoundException(Exception):
-    """
-    Raised when an installer cannot be found for the specified source
-    """
+    def make(self, command, args, cli, location):
+        """
+        Create command object specified by the command argument
+        :param command: {string} The command object to create
+        :param args: {dict} The command line parameters
+        :param cli: {cli.PymCli} The cli interface object
+        :param location: {string} The current execution location
+        :return: {PymCommand} An instance of a pym command
+        """
+        cls = self.commands[command]
+        return cls.make(args, cli, location)
 
+    def args(self, parser):
+        """
+        Attaches args to the given parser
+        :param parser: {argparse.ArgumentParser} An argparse ArgumentParser instance
+        :return: None
+        """
+        subparsers = parser.add_subparsers(help='pym sub-commands', dest='command')
 
-class VersionNotFoundException(Exception):
-    """
-    Raised when the specified version cannot be found
-    """
+        for _, cls in self.commands.items():
+            cls.args(subparsers)
 
 
 class PymCommand(object):
@@ -50,6 +66,17 @@ class PymCommand(object):
         """
         raise NotImplemented("Method 'args' not implemented in base class")
 
+    @classmethod
+    def make(cls, cli, args, location):
+        """
+        Used to create this command
+        :param cli: {cli.PymCli} Reference to cli object for input and output
+        :param args: {dict} Dictionary of command line arguments
+        :param location: {string} Current execution/project location
+        :return: {PymCommand} Returns an instance of the invoked PymCommand class
+        """
+        raise NotImplemented("Method 'make' not implemented in base class")
+
     def __init__(self, cli):
         """
         Initialize a PymCommand
@@ -57,7 +84,7 @@ class PymCommand(object):
         """
         self.cli = cli
 
-    def run(self, args, path):
+    def run(self, args):
         """
         Run the subcommand.
         :param args: {dict} Command line arguments, as parsed by argparse, converted to a dict
@@ -66,154 +93,25 @@ class PymCommand(object):
         raise NotImplemented("Method 'run' not implemented in base class")
 
 
-class InstallCommand(PymCommand):
-    """
-    1. Download package into staging area
-    2. Create manifest for current package versions
-    3. Determine dependencies of current packages
-    4. Resolve dependencies by downloading more packages, etc
-    """
-    COMMAND = 'install'
-
-    @classmethod
-    def args(cls, subparsers):
-        subparser = subparsers.add_parser(InstallCommand.COMMAND, help='Install the specified package',
-                                          epilog='Example: pym install --save https://github.com/tornadoweb/tornado.git')
-        subparser.add_argument('packages', help='Package name (or git location)', nargs='*', metavar='package')
-        subparser.add_argument('--save', help='Save the package to local config', action='store_true')
-
-    def __init__(self, cli):
-        super(InstallCommand, self).__init__(cli)
-        self.installers = [
-            GitInstaller
-        ]
-
-        self.project = None
-        self.packages_key = 'dependencies'
-
-    def run(self, args, path):
-        self.project = PymPackage.load(path)
-
-        if args['packages']:
-            installables = list(itertools.zip_longest([], set(args['packages'])))
-        else:
-            installables = self.project[self.packages_key].items()
-
-        self.cli.debug(installables)
-
-        dest = os.path.join(path, self.project['staging_location'])
-
-        packages = []
-
-        for name, reference in installables:
-            packages.append(self.install(reference, dest, args['save'], name))
-
-        for pkg in packages:
-            dest = os.path.join(self.project.location, self.project['install_location'], pkg['name'])
-            self.unstage(pkg, dest)
-            self.cli.success('Successfully installed {}!'.format(pkg['name']))
-
-        if args['save']:
-            self.cli.info('Saving to {}'.format(self.project['name']))
-            self.project.save()
-
-    def install(self, reference, dest, save=False, name=None):
-        self.cli.info('Installing {}'.format(reference))
-        installer = self.find_installer(name, reference)
-        info = installer.install(reference, dest, name)
-
-        try:
-            new_package = PymPackage.load(info.path)
-        except PymPackageException:
-            self.cli.info('No pym config file found, creating...')
-            new_package = self.create_package(info)
-            new_package.save()
-
-        if save:
-            self.project[self.packages_key][new_package['name']] = info.version_range
-
-        return new_package
-
-    def unstage(self, pkg, dest):
-        src = pkg.location
-        self.cli.debug('Moving {src} to {dest}'.format(src=src, dest=dest))
-        try:
-            shutil.rmtree(dest)
-        except FileNotFoundError:
-            pass
-        shutil.move(src, dest)
-
-    def find_installer(self, name, reference):
-        try:
-            cls = next(i for i in self.installers if i.can_install(name, reference))
-            return cls(self.cli)
-        except StopIteration as e:
-            raise InstallerNotFoundException('Failed to find an installer for {}'.format(reference)) from e
-
-    def create_package(self, info):
-        builder = PymConfigBuilder(self.cli)
-        info.src = PackageInfo.guess_src(info)
-
-        if info.src:
-            config = builder.build(info)
-        else:
-            config = builder.query(info)
-
-        new_package = PymPackage(info.path, config)
-        return new_package
-
-
-class GitInstaller(object):
-    @classmethod
-    def can_install(cls, name, reference):
-        source, _, _ = reference.partition('#')
-        return source.endswith('.git') or source.startswith('git+')
+class PymCommandContext(object):
+    ACTIONS = {
+        exceptions.PymPackageException: "Run 'pym init' to create a project here",
+        exceptions.InstallerNotFoundException: "Double-check the installation source and version"
+                                               "(use '#' for git instead of '@')",
+        exceptions.VersionNotFoundException: "Please check that the version specified exists"
+    }
 
     def __init__(self, cli):
         self.cli = cli
 
-    def install(self, reference, dest, name=None):
-        info = PackageInfo.parse(reference.lstrip('git+'), delim='#')
-        info.name = name or info.name
-        repo = self.clone(info.source, os.path.join(dest, info.name), info.version)
-        try:
-            version = str(repo.active_branch)
-        except TypeError:
-            # GitPython raises a TypeError on a detached HEAD state-- which is every time a tag is used
-            # We'll just default to what we parsed
-            version = info.version
+    def __enter__(self):
+        pass
 
-        info.update({
-            'path': repo.working_dir,
-            'description': repo.description,
-            'version': version,
-            'version_range': 'git+' + reference
-        })
-        self.remove_git(info.path)
-        return info
-
-    def remove_git(self, path):
-        def handle_readonly(func, path, exc):
-            excvalue = exc[1]
-            if excvalue.errno == errno.EACCES:
-                os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 0777
-                func(path)
-            else:
-                raise exc[1]
-
-        git_dir = os.path.join(path, '.git')
-        shutil.rmtree(git_dir, ignore_errors=False, onerror=handle_readonly)
-
-    def clone(self, source, dest, version):
-        repo = Repo.clone_from(source, dest)
-        if version:
-            self.cli.debug("Checking out {version}...".format(version=version))
-            try:
-                git = repo.git
-                git.checkout(version)
-            except exc.GitCommandError as e:
-                raise VersionNotFoundException('Failed to find version {version}'.format(version=version)) from e
-        return repo
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_val:
+            self.cli.error(str(exc_val))
+            self.cli.action(PymCommandContext.ACTIONS[exc_type])
+            sys.exit(2)
 
 
 class InitCommand(PymCommand):
@@ -222,17 +120,28 @@ class InitCommand(PymCommand):
     @classmethod
     def args(cls, subparsers):
         subparsers.add_parser(InitCommand.COMMAND, help='Initialize a pym project in the current directory',
-                                          epilog='Example: pym init')
+                              epilog='Example: pym init')
 
-    def run(self, args, path):
-        info = PackageInfo.parse(path)
-        info.path = path
-        info.src = PackageInfo.guess_src(info)
+    @classmethod
+    def make(cls, cli, args, location):
+        info = package.PackageInfo.parse(location)
+        info.path = location
+        info.src = package.PackageInfo.guess_src(info)
         info.version = '0.1.0'
         info.license = 'MIT'
-        builder = PymConfigBuilder(self.cli)
-        config = builder.query(info)
-        project = PymPackage(path, config)
+        return cls(cli, info)
+
+    def __init__(self, cli, info):
+        super(InitCommand, self).__init__(cli)
+        self.info = info
+
+    def run(self, args):
+        project = self.create(self.info)
         project.save()
         self.cli.success('Initialized project')
 
+    def create(self, info):
+        builder = package.PymConfigBuilder(self.cli)
+        config = builder.query(info)
+        project = package.PymPackage(info.path, config)
+        return project

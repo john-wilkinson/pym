@@ -1,11 +1,7 @@
 import os
 import json
 
-
-class PymPackageException(Exception):
-    """
-    Raised when not a PymPackage
-    """
+from .exceptions import PymPackageException
 
 
 DEFAULT_VALUES = {
@@ -81,12 +77,14 @@ class PackageInfo(dict):
 
 
 class PymPackage(object):
-    def __init__(self, location, config):
+    def __init__(self, location, config, defaults=None):
         self.location = location
         self.config = config
+        self.defaults = defaults
 
     def __getitem__(self, item):
-        return self.config[item]
+        val = self.config.get(item)
+        return val if val is not None else self.defaults[item]
 
     def __setitem__(self, key, value):
         self.config[key] = value
@@ -101,7 +99,7 @@ class PymPackage(object):
         try:
             with open(path) as data:
                 config = json.load(data)
-                return PymPackage(location, {**DEFAULT_VALUES, **config})
+                return PymPackage(location, config, DEFAULT_VALUES)
         except FileNotFoundError as e:
             raise PymPackageException('Failed to find load config file {}'.format(path)) from e
 

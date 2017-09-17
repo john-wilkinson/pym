@@ -33,7 +33,7 @@ class PymCli(object):
     def action(self, message):
         self.write('action', message)
 
-    def warning(self, message):
+    def warn(self, message):
         self.write('warning', message)
 
     def error(self, message):
@@ -56,7 +56,7 @@ class Win32Cli(PymCli):
         'info': winapi.FOREGROUND_CYAN,
         'success': winapi.FOREGROUND_GREEN,
         'action': winapi.FOREGROUND_MAGENTA,
-        'warning': winapi.BACKGROUND_YELLOW,
+        'warning': winapi.FOREGROUND_YELLOW,
         'error': winapi.FOREGROUND_RED,
         'debug': winapi.FOREGROUND_BLUE
     }
