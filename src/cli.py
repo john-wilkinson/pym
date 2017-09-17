@@ -19,9 +19,10 @@ class PymCli(object):
     The PymCli class is used to abstract any interactions with the user (input and output)
     """
 
-    def __init__(self):
+    def __init__(self, debug=False):
         self.out = sys.stdout
         self.err = sys.stderr
+        self.enable_debug = debug
 
     def info(self, message):
         self.write('info', message)
@@ -39,11 +40,12 @@ class PymCli(object):
         self.write('error', message, self.err)
 
     def debug(self, message):
-        self.write('debug', message)
+        if not self.debug:
+            self.write('debug', message)
 
     def write(self, level, message, stream=None):
         stream = stream or self.out
-        stream.write("[{level}] {message}{newline}".format(level=level, message=message, newline=os.linesep))
+        stream.write("[{level}] {message}{newline}".format(level=level, message=str(message), newline=os.linesep))
 
     def ask(self, question):
         return input(question)
@@ -66,7 +68,7 @@ class Win32Cli(PymCli):
     def write(self, level, message, stream=None):
         stream = stream or self.out
         self.write_level(level, stream)
-        stream.write(message + Win32Cli.NEWLINE)
+        stream.write(str(message) + Win32Cli.NEWLINE)
 
     def write_level(self, level, stream):
         color = Win32Cli.COLOR_MAP[level]

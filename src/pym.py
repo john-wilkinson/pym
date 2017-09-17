@@ -16,6 +16,8 @@ class PymApp(object):
         command_registry = commands.make()
         args = self.get_args(command_registry)
 
+        self.cli.enable_debug = args['debug']
+
         cmd = command_registry[args['command']](self.cli)
 
         location = os.path.realpath(os.path.join(os.getcwd()))
@@ -25,6 +27,7 @@ class PymApp(object):
 
     def get_args(self, command_registry):
         parser = argparse.ArgumentParser(prog='pym', description='Manage Python packages.')
+        parser.add_argument('--debug', help='Run with debug output enabled', action='store_false')
         subparsers = parser.add_subparsers(help='pym sub-commands', dest='command')
 
         for _, cls in command_registry.items():

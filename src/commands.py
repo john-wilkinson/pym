@@ -4,6 +4,7 @@ import errno
 import stat
 import sys
 import inspect
+import itertools
 from git import Repo, exc
 from .package import PymPackage, PymConfigBuilder, PackageInfo, PymPackageException
 
@@ -66,13 +67,19 @@ class PymCommand(object):
 
 
 class InstallCommand(PymCommand):
+    """
+    1. Download package into staging area
+    2. Create manifest for current package versions
+    3. Determine dependencies of current packages
+    4. Resolve dependencies by downloading more packages, etc
+    """
     COMMAND = 'install'
 
     @classmethod
     def args(cls, subparsers):
         subparser = subparsers.add_parser(InstallCommand.COMMAND, help='Install the specified package',
                                           epilog='Example: pym install --save https://github.com/tornadoweb/tornado.git')
-        subparser.add_argument('package', help='Package name (or git location)')
+        subparser.add_argument('packages', help='Package name (or git location)', nargs='*', metavar='package')
         subparser.add_argument('--save', help='Save the package to local config', action='store_true')
 
     def __init__(self, cli):
@@ -81,16 +88,39 @@ class InstallCommand(PymCommand):
             GitInstaller
         ]
 
+        self.project = None
+        self.packages_key = 'dependencies'
+
     def run(self, args, path):
-        project = PymPackage.load(path)
+        self.project = PymPackage.load(path)
 
-        dest = os.path.join(path, project['staging_location'])
-        reference = args['package']
+        if args['packages']:
+            installables = list(itertools.zip_longest([], set(args['packages'])))
+        else:
+            installables = self.project[self.packages_key].items()
 
-        installer = self.find_installer(reference)
+        self.cli.debug(installables)
+
+        dest = os.path.join(path, self.project['staging_location'])
+
+        packages = []
+
+        for name, reference in installables:
+            packages.append(self.install(reference, dest, args['save'], name))
+
+        for pkg in packages:
+            dest = os.path.join(self.project.location, self.project['install_location'], pkg['name'])
+            self.unstage(pkg, dest)
+            self.cli.success('Successfully installed {}!'.format(pkg['name']))
+
+        if args['save']:
+            self.cli.info('Saving to {}'.format(self.project['name']))
+            self.project.save()
+
+    def install(self, reference, dest, save=False, name=None):
         self.cli.info('Installing {}'.format(reference))
-
-        info = installer.install(reference, os.path.join(path, dest))
+        installer = self.find_installer(name, reference)
+        info = installer.install(reference, dest, name)
 
         try:
             new_package = PymPackage.load(info.path)
@@ -99,23 +129,23 @@ class InstallCommand(PymCommand):
             new_package = self.create_package(info)
             new_package.save()
 
-        self.unstage(project, new_package)
-        if args['save']:
-            self.cli.info('Saving to {}'.format(project['name']))
-            project['dependencies'][new_package['name']] = info.version_range
-            project.save()
-        self.cli.success('Successfully installed {}!'.format(new_package['name']))
+        if save:
+            self.project[self.packages_key][new_package['name']] = info.version_range
 
-    def unstage(self, project, pkg):
-        dest = os.path.join(project.location, project['install_location'], pkg['name'])
+        return new_package
+
+    def unstage(self, pkg, dest):
         src = pkg.location
-        self.cli.info('Moving {src} to {dest}'.format(src=src, dest=dest))
-        shutil.rmtree(dest)
+        self.cli.debug('Moving {src} to {dest}'.format(src=src, dest=dest))
+        try:
+            shutil.rmtree(dest)
+        except FileNotFoundError:
+            pass
         shutil.move(src, dest)
 
-    def find_installer(self, reference):
+    def find_installer(self, name, reference):
         try:
-            cls = next(i for i in self.installers if i.can_install(reference))
+            cls = next(i for i in self.installers if i.can_install(name, reference))
             return cls(self.cli)
         except StopIteration as e:
             raise InstallerNotFoundException('Failed to find an installer for {}'.format(reference)) from e
@@ -135,15 +165,16 @@ class InstallCommand(PymCommand):
 
 class GitInstaller(object):
     @classmethod
-    def can_install(cls, reference):
+    def can_install(cls, name, reference):
         source, _, _ = reference.partition('#')
-        return source.endswith('.git')
+        return source.endswith('.git') or source.startswith('git+')
 
     def __init__(self, cli):
         self.cli = cli
 
-    def install(self, reference, dest):
-        info = PackageInfo.parse(reference, delim='#')
+    def install(self, reference, dest, name=None):
+        info = PackageInfo.parse(reference.lstrip('git+'), delim='#')
+        info.name = name or info.name
         repo = self.clone(info.source, os.path.join(dest, info.name), info.version)
         try:
             version = str(repo.active_branch)
@@ -176,7 +207,7 @@ class GitInstaller(object):
     def clone(self, source, dest, version):
         repo = Repo.clone_from(source, dest)
         if version:
-            self.cli.info("Checking out {version}...".format(version=version))
+            self.cli.debug("Checking out {version}...".format(version=version))
             try:
                 git = repo.git
                 git.checkout(version)
