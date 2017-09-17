@@ -33,7 +33,7 @@ pym install https://github.com/tornadoweb/tornado.git
 
 A particular tag, checkout, or branch can be specified by putting a `#` with the modifier after the repo url.
 
-``
+```
 pym install https://github.com/tornadoweb/tornado.git#v4.5.2
 ```
 
