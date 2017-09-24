@@ -1,3 +1,15 @@
+"""
+The install module has the logic for installing the packages
+
+1. Calculate the list of references
+2. Calculate initial dependency graph
+3. Download packages
+    a. Download to staging area
+    b. Re-calculate dependency graph
+    c. Resolve any dependencies
+4. Unstage dependencies in staging area
+"""
+
 import os
 import shutil
 import errno
@@ -85,6 +97,13 @@ class InstallCommand(PymCommand):
         return new_package
 
     def unstage(self, pkg, dest):
+        """
+        Unstage the package from the staging directory
+        This will remove the package from the existing location, if there is one.
+        :param pkg: {PymPackage} The package to unstage
+        :param dest: {string} The full destination path to unstage the package
+        :return: None
+        """
         src = pkg.location
         self.cli.debug('Moving {src} to {dest}'.format(src=src, dest=dest))
         try:
@@ -225,3 +244,34 @@ class UninstallCommand(PymCommand):
             except KeyError as e:
                 self.cli.debug('{} was never saved as a dependency'.format(removable))
         self.project.save()
+
+
+class Dependency(object, name, version_range):
+    def __init__(self):
+        self.name = name
+        self.version_range = version_range
+
+
+class DependencyGraph(object):
+    def __init__(self, cli):
+        self.cli = cli
+        self.dependencies = {}
+
+    def add(self, dependency):
+        dep_list = self.dependencies.get(dependency.name, [])
+        dep_list.append(dependency)
+
+    def resolve(self):
+        chosen = []
+        for key, val in self.dependencies.items():
+            self.chosen.append(self.choose(val))
+        return chosen
+
+    def choose(self, dependency_list):
+        return itertools.reduce(dependency_list, dependency_list)
+
+    def compare(self, a, b):
+        a = Spec.parse(a)
+        b = Spec.parse(b)
+        return False
+
