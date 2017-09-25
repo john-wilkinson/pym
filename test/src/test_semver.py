@@ -32,6 +32,31 @@ class TestVersion(unittest.TestCase):
         v.inc('minor')
         self.assertEqual(v, semver.Version(1, 3, 0))
 
+    def test_cmp(self):
+        v1 = semver.Version.parse('1.2.3')
+        v2 = semver.Version.parse('1.2.4')
+        self.assertTrue(v1 < v2)
+
+        v1 = semver.Version.parse('1.2.3')
+        v2 = semver.Version.parse('1.2.4')
+        self.assertTrue(v1 <= v2)
+
+        v1 = semver.Version.parse('1.13.3')
+        v2 = semver.Version.parse('1.2.4')
+        self.assertTrue(v1 > v2)
+
+        v1 = semver.Version.parse('1.3.3')
+        v2 = semver.Version.parse('1.2.4')
+        self.assertTrue(v1 != v2)
+
+        v1 = semver.Version.parse('1.2.3-alpha')
+        v2 = semver.Version.parse('1.2.3-beta')
+        self.assertTrue(v1 < v2)
+
+        v1 = semver.Version.parse('1.2.3-alpha.0')
+        v2 = semver.Version.parse('1.2.3-alpha.1')
+        self.assertTrue(v1 < v2)
+
 
 class TestComparator(unittest.TestCase):
     def test_parse(self):
@@ -47,6 +72,16 @@ class TestComparator(unittest.TestCase):
         self.assertEqual(c.operator, '=')
         self.assertEqual(c.version, semver.Version(1, 2, 3))
 
+    def test_satisfies(self):
+        c = semver.Comparator('=', semver.Version(1, 2, 3))
+        self.assertTrue(c.satisfies(semver.Version(1, 2, 3)))
+
+        c = semver.Comparator('<', semver.Version(1, 2, 3))
+        self.assertTrue(c.satisfies(semver.Version(1, 1, 3)))
+
+        c = semver.Comparator('>', semver.Version(1, 2, 3))
+        self.assertTrue(c.satisfies(semver.Version(1, 3, 3)))
+
 
 class TestVersionRange(unittest.TestCase):
     def test_parse(self):
@@ -61,6 +96,13 @@ class TestVersionRange(unittest.TestCase):
 
         r = semver.VersionRange.parse('^1.2.3')
         self.assertIsInstance(r, semver.CaretRange)
+
+    def test_contains(self):
+        r = semver.VersionRange.parse('1.2.3 - 4.5.6')
+        self.assertTrue(semver.Version(2, 3, 4) in r)
+
+        r = semver.VersionRange.parse('1.2.x')
+        self.assertTrue('1.2.3' in r)
 
 
 class TestHyphenRange(unittest.TestCase):

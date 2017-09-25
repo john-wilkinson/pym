@@ -21,6 +21,7 @@ Key philosophies:
 
 import re
 import copy
+from functools import total_ordering
 from collections import OrderedDict
 
 
@@ -34,7 +35,9 @@ def valid(v):
 
 
 def inc(v, release, identifier=None):
-    pass
+    version = Version.parse(v)
+    version.inc(release, identifier)
+    return version
 
 
 def prerelease(v):
@@ -42,15 +45,15 @@ def prerelease(v):
 
 
 def major(v):
-    pass
+    return Version.parse(v).major
 
 
 def minor(v):
-    pass
+    return Version.parse(v).minor
 
 
 def patch(v):
-    pass
+    return Version.parse(v).patch
 
 
 def intersects(r1, r2):
@@ -71,33 +74,34 @@ Comparison
 
 
 def eq(v1, v2):
-    pass
+    return Version.parse(v1) == Version.parse(v2)
 
 
 def neq(v1, v2):
-    pass
+    return Version.parse(v1) != Version.parse(v2)
 
 
 def gt(v1, v2):
-    pass
+    return Version.parse(v1) > Version.parse(v2)
 
 
 def gte(v1, v2):
-    pass
+    return Version.parse(v1) >= Version.parse(v2)
 
 
 def lt(v1, v2):
-    pass
+    return Version.parse(v1) < Version.parse(v2)
 
 
 def lte(v1, v2):
-    pass
+    return Version.parse(v1) <= Version.parse(v2)
 
 
 def match(a, b):
     return None
 
 
+@total_ordering
 class Version(object):
     PRIMARY_SEGMENTS = ['major', 'minor', 'patch']
 
@@ -111,8 +115,15 @@ class Version(object):
         self.partial = minor is None or patch is None
 
     def __eq__(self, other):
-        return self.major == other.major and self.minor == other.minor and \
-               self.patch == other.patch and self.build == other.build
+        return str(self) == str(other)
+
+    def __lt__(self, other):
+        for seg in self.segments:
+            if self[seg] < other[seg]:
+                return True
+            elif self[seg] > other[seg]:
+                return False
+        return False
 
     def __copy__(self):
         return Version(self.major, self.minor, self.patch, self.build)
@@ -126,7 +137,7 @@ class Version(object):
     def __str__(self):
         out = "{}.{}.{}".format(self.major, self.minor, self.patch)
         if self.build:
-            out += "-" + build
+            out += "-" + self.build
         return out
 
     def __repr__(self):
@@ -177,8 +188,30 @@ class Comparator(object):
         self.operator = operator
         self.version = version
 
+    def __str__(self):
+        return self.operator + str(self.version)
+
+    def satisfies(self, version):
+        return self.operation(version)
+
     def intersects(self, other):
         pass
+
+    @property
+    def operation(self):
+        """
+        The operation map seems backwards for less than/greater than comparisions because we are comparing
+        as the right side of the equation, not the left.
+        :return: {func} The appropriate comparison operation
+        """
+        call_map = {
+            '<': self.version.__gt__,
+            '<=': self.version.__ge__,
+            '>': self.version.__lt__,
+            '>=': self.version.__le__,
+            '=': self.version.__eq__
+        }
+        return call_map[self.operator]
 
     @classmethod
     def parse(cls, v):
@@ -198,7 +231,9 @@ class VersionRange(object):
         self.upper = upper
 
     def __contains__(self, item):
-        pass
+        if isinstance(item, str):
+            item = Version.parse(item)
+        return self.lower.satisfies(item) and (self.upper is None or self.upper.satisfies(item))
 
     def max(self, versions):
         pass
