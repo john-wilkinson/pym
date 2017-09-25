@@ -14,9 +14,9 @@ https://github.com/npm/node-semver
 Key philosophies:
 
 1. A version is the basis of all operations, consisting of a major, minor, patch, and build value
-2. A comparitor consists of an operator and a version
-3. A version range consists of upper and lower comparitors
-4. A spec consists of an arbitrary number of version ranges
+2. A comparator consists of an operator and a version (npm semver "Comparator")
+3. A version range consists of upper and lower comparators (npm semver "Comparator Set")
+4. A spec consists of an arbitrary number of version ranges (npm semver "Version Range")
 """
 
 import re
@@ -31,17 +31,16 @@ Functions
 
 
 def valid(v):
-    pass
+    try:
+        return Version.parse(v)
+    except VersionParseException as e:
+        return None
 
 
 def inc(v, release, identifier=None):
     version = Version.parse(v)
     version.inc(release, identifier)
     return version
-
-
-def prerelease(v):
-    pass
 
 
 def major(v):
@@ -56,16 +55,22 @@ def patch(v):
     return Version.parse(v).patch
 
 
+def prerelease(v):
+    return Version.parse(v).prerelease
+
+
 def intersects(r1, r2):
-    pass
+    vrange = VersionRange.parse(r1)
+    return vrange.intersects(VersionRange.parse(r2))
 
 
 def clean(v):
     pass
 
 
-def satisfies(v, vrange):
-    pass
+def satisfies(v, cmp):
+    c = Comparator.parse(cmp)
+    return c.satisfies(Version.parse(v))
 
 
 """
@@ -97,7 +102,42 @@ def lte(v1, v2):
     return Version.parse(v1) <= Version.parse(v2)
 
 
-def match(a, b):
+def sort(v_list, reverse=False):
+    return sorted(map(Version.parse, v_list), reverse=reverse)
+
+
+"""
+Ranges
+"""
+
+
+def valid_range(r):
+    try:
+        return VersionRange.parse(r)
+    except VersionParseException:
+        return None
+
+
+def contains(r, v):
+    vrange = VersionRange.parse(r)
+    return v in vrange
+
+
+def range_max(r, v):
+    vrange = VersionRange.parse(r)
+    versions = sort(v, reverse=True)
+    for version in versions:
+        if version in vrange:
+            return version
+    return None
+
+
+def range_min(r, v):
+    vrange = VersionRange.parse(r)
+    versions = sort(v)
+    for version in versions:
+        if version in vrange:
+            return version
     return None
 
 
@@ -159,6 +199,10 @@ class Version(object):
     def build(self):
         return self['build']
 
+    @property
+    def prerelease(self):
+        return self.build.split('.')
+
     def inc(self, release, identifier=None):
         try:
             idx = Version.PRIMARY_SEGMENTS.index(release)
@@ -195,7 +239,20 @@ class Comparator(object):
         return self.operation(version)
 
     def intersects(self, other):
-        pass
+        self_point = self.operator == '='
+        other_point = other.operator == '='
+        if not self_point and not other_point:
+            self_satisfied = self.satisfies(other.version)
+            other_satisfied = other.satisfies(self.version)
+            return self_satisfied or other_satisfied
+
+        if self_point and other.satisfies(self.version):
+            return True
+
+        if other_point and self.satisfies(other.version):
+            return True
+
+        return False
 
     @property
     def operation(self):
@@ -235,17 +292,16 @@ class VersionRange(object):
             item = Version.parse(item)
         return self.lower.satisfies(item) and (self.upper is None or self.upper.satisfies(item))
 
-    def max(self, versions):
-        pass
+    def is_over(self, version):
+        return self.upper is not None and not self.upper.satisfies(version) and self.lower.satisfies(version)
 
-    def min(self, versions):
-        pass
+    def is_under(self, version):
+        return not self.lower.satisfies(version) and self.upper.satisfies(version)
 
-    def greater(self, version):
-        pass
-
-    def lesser(self, version):
-        pass
+    def intersects(self, other):
+        x_upper = self.upper.intersects(other.lower) if self.upper else True
+        x_lower = self.lower.intersects(other.upper) if other.upper else True
+        return x_upper and x_lower
 
     @staticmethod
     def valid(v):
@@ -269,6 +325,8 @@ class VersionRange(object):
 
         if v.startswith('^'):
             return CaretRange.parse(v)
+
+        return cls(Comparator.parse(lower), None)
 
 
 class HyphenRange(VersionRange):
