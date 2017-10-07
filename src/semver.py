@@ -65,7 +65,7 @@ def intersects(r1, r2):
 
 
 def clean(v):
-    pass
+    Version.clean(v)
 
 
 def satisfies(v, cmp):
@@ -181,7 +181,7 @@ class Version(object):
         return out
 
     def __repr__(self):
-        return "{}: {}".format(id(self), str(self))
+        return "Version(major={major}, minor={minor}, patch={patch}, build={build})".format(**self.segments)
 
     @property
     def major(self):
@@ -216,7 +216,7 @@ class Version(object):
     @classmethod
     def parse(cls, version_str):
         try:
-            version_str = version_str.lstrip('=v')
+            version_str = cls.clean(version_str)
             primary, _, build = version_str.partition('-')
             parts = iter(primary.split('.'))
             vmajor = int(next(parts))
@@ -225,6 +225,10 @@ class Version(object):
             return cls(vmajor, vminor, vpatch, build)
         except ValueError as e:
             raise VersionParseException('Invalid version string {}'.format(version_str)) from e
+
+    @staticmethod
+    def clean(version_str):
+        return version_str.strip().lstrip('=v')
 
 
 class Comparator(object):
@@ -239,20 +243,17 @@ class Comparator(object):
         return self.operation(version)
 
     def intersects(self, other):
-        self_point = self.operator == '='
-        other_point = other.operator == '='
-        if not self_point and not other_point:
-            self_satisfied = self.satisfies(other.version)
-            other_satisfied = other.satisfies(self.version)
-            return self_satisfied or other_satisfied
-
-        if self_point and other.satisfies(self.version):
-            return True
-
-        if other_point and self.satisfies(other.version):
-            return True
-
-        return False
+        has_intersection = False
+        if self.direction == 0:
+            has_intersection = other.satisfies(self.version)
+        elif other.direction == 0:
+            has_intersection = self.satisfies(other.version)
+        elif self.direction == other.direction:
+            larger, smaller = sorted([self, other], key=lambda comp: comp.version, reverse=self.direction == -1)
+            has_intersection = larger.satisfies(smaller.version)
+        else:
+            has_intersection = self.satisfies(other.version) and other.satisfies(self.version)
+        return has_intersection
 
     @property
     def operation(self):
@@ -269,6 +270,17 @@ class Comparator(object):
             '=': self.version.__eq__
         }
         return call_map[self.operator]
+
+    @property
+    def direction(self):
+        direction_map = {
+            '<': -1,
+            '<=': -1,
+            '=': 0,
+            '>': 1,
+            '>=': 1
+        }
+        return direction_map[self.operator]
 
     @classmethod
     def parse(cls, v):
@@ -292,6 +304,9 @@ class VersionRange(object):
             item = Version.parse(item)
         return self.lower.satisfies(item) and (self.upper is None or self.upper.satisfies(item))
 
+    def __str__(self):
+        return str(self.lower) + ' ' + str(self.upper)
+
     def is_over(self, version):
         return self.upper is not None and not self.upper.satisfies(version) and self.lower.satisfies(version)
 
@@ -299,9 +314,19 @@ class VersionRange(object):
         return not self.lower.satisfies(version) and self.upper.satisfies(version)
 
     def intersects(self, other):
-        x_upper = self.upper.intersects(other.lower) if self.upper else True
-        x_lower = self.lower.intersects(other.upper) if other.upper else True
-        return x_upper and x_lower
+        if self.upper is None and other.upper is None:
+            return self.lower.intersects(other.lower)
+
+        if self.upper is None:
+            return self.lower.intersects(other.upper)
+
+        if other.upper is None:
+            return other.lower.intersects(self.upper) and other.lower.intersects()
+
+        uil = self.upper.intersects(other.lower)
+        liu = self.lower.intersects(other.upper)
+
+        return uil and liu
 
     @staticmethod
     def valid(v):
@@ -326,7 +351,14 @@ class VersionRange(object):
         if v.startswith('^'):
             return CaretRange.parse(v)
 
-        return cls(Comparator.parse(lower), None)
+        cl = Comparator.parse(lower)
+
+        if cl.operator == '=':
+            cu = Comparator.parse(lower)
+        else:
+            cu = None
+
+        return cls(cl, cu)
 
 
 class HyphenRange(VersionRange):
@@ -393,6 +425,15 @@ class CaretRange(VersionRange):
 class Spec(object):
     def __init__(self, ranges):
         self.ranges = ranges
+
+    def intersects(self, spec):
+        for r in self.ranges:
+            for s in spec.ranges:
+                if r.intersects(s):
+                    return True
+            # if any(r.intersects(s) for s in spec.ranges):
+            #     return True
+        return False
 
     @classmethod
     def parse(cls, spec):

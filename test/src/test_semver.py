@@ -82,6 +82,11 @@ class TestComparator(unittest.TestCase):
         self.assertEqual(c.operator, '=')
         self.assertEqual(c.version, semver.Version(1, 2, 3))
 
+        c = semver.Comparator.parse('>=4.5.6')
+        self.assertEqual(c.operator, '>=')
+        self.assertEqual(c.version, semver.Version(4, 5, 6))
+
+
     def test_satisfies(self):
         c = semver.Comparator('=', semver.Version(1, 2, 3))
         self.assertTrue(c.satisfies(semver.Version(1, 2, 3)))
@@ -122,6 +127,26 @@ class TestComparator(unittest.TestCase):
 
         c1 = semver.Comparator.parse('>=4.2.3')
         c2 = semver.Comparator.parse('<3.4.5')
+        self.assertFalse(c1.intersects(c2))
+
+        c1 = semver.Comparator.parse('<=4.2.3')
+        c2 = semver.Comparator.parse('>4.2.3')
+        self.assertFalse(c1.intersects(c2))
+
+        c1 = semver.Comparator.parse('>4.2.1')
+        c2 = semver.Comparator.parse('>4.2.3')
+        self.assertTrue(c1.intersects(c2))
+
+        c1 = semver.Comparator.parse('>=4.2.3')
+        c2 = semver.Comparator.parse('>4.2.3')
+        self.assertTrue(c1.intersects(c2))
+
+        c1 = semver.Comparator.parse('1.2.3')
+        c2 = semver.Comparator.parse('1.3.0')
+        self.assertFalse(c1.intersects(c2))
+
+        c1 = semver.Comparator.parse('>=4.5.6')
+        c2 = semver.Comparator.parse('3.3.0')
         self.assertFalse(c1.intersects(c2))
 
 
@@ -183,6 +208,14 @@ class TestVersionRange(unittest.TestCase):
 
         r1 = semver.VersionRange.parse('>=4.2.3')
         r2 = semver.VersionRange.parse('2.1.0 - 3.4.5')
+        self.assertFalse(r1.intersects(r2))
+
+        r1 = semver.VersionRange.parse('1.2.3')
+        r2 = semver.VersionRange.parse('1.3.0')
+        self.assertFalse(r1.intersects(r2))
+
+        r1 = semver.VersionRange.parse('>=4.5.6 <5.0.0')
+        r2 = semver.VersionRange.parse('3.3.0')
         self.assertFalse(r1.intersects(r2))
 
 
@@ -249,3 +282,20 @@ class TestCaretRange(unittest.TestCase):
         self.assertEqual(r.lower.version, semver.Version(0, 0, 3))
         self.assertEqual(r.upper.operator, '<')
         self.assertEqual(r.upper.version, semver.Version(0, 0, 4))
+
+
+class TestSpec(unittest.TestCase):
+    def test_parse(self):
+        s = semver.Spec.parse('^1.2.3 or 4.5.6 - 5.0.0')
+        self.assertEqual(len(s.ranges), 2)
+        self.assertIsInstance(s.ranges[0], semver.CaretRange)
+        self.assertIsInstance(s.ranges[1], semver.HyphenRange)
+
+    def test_intersects(self):
+        s1 = semver.Spec.parse('1.2.3')
+        s2 = semver.Spec.parse('1.3.0')
+        self.assertFalse(s1.intersects(s2))
+
+        s1 = semver.Spec.parse('^1.2.3 or 4.5.6 - 5.0.0')
+        s2 = semver.Spec.parse('3.3.0 or 5.1.1 - 5.1.2')
+        self.assertFalse(s1.intersects(s2))
