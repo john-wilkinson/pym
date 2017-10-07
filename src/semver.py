@@ -323,10 +323,7 @@ class VersionRange(object):
         if other.upper is None:
             return other.lower.intersects(self.upper) and other.lower.intersects()
 
-        uil = self.upper.intersects(other.lower)
-        liu = self.lower.intersects(other.upper)
-
-        return uil and liu
+        return self.upper.intersects(other.lower) and self.lower.intersects(other.upper)
 
     @staticmethod
     def valid(v):
@@ -428,11 +425,8 @@ class Spec(object):
 
     def intersects(self, spec):
         for r in self.ranges:
-            for s in spec.ranges:
-                if r.intersects(s):
-                    return True
-            # if any(r.intersects(s) for s in spec.ranges):
-            #     return True
+            if any(r.intersects(s) for s in spec.ranges):
+                return True
         return False
 
     @classmethod

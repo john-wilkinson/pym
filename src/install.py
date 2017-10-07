@@ -244,34 +244,3 @@ class UninstallCommand(PymCommand):
             except KeyError as e:
                 self.cli.debug('{} was never saved as a dependency'.format(removable))
         self.project.save()
-
-
-class Dependency(object, name, version_range):
-    def __init__(self):
-        self.name = name
-        self.version_range = version_range
-
-
-class DependencyGraph(object):
-    def __init__(self, cli):
-        self.cli = cli
-        self.dependencies = {}
-
-    def add(self, dependency):
-        dep_list = self.dependencies.get(dependency.name, [])
-        dep_list.append(dependency)
-
-    def resolve(self):
-        chosen = []
-        for key, val in self.dependencies.items():
-            self.chosen.append(self.choose(val))
-        return chosen
-
-    def choose(self, dependency_list):
-        return itertools.reduce(dependency_list, dependency_list)
-
-    def compare(self, a, b):
-        a = Spec.parse(a)
-        b = Spec.parse(b)
-        return False
-
