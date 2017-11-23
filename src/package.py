@@ -1,4 +1,5 @@
 import os
+import re
 import json
 
 from .exceptions import PymPackageException

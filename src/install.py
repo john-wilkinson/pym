@@ -11,15 +11,22 @@ The install module has the logic for installing the packages
 """
 
 import os
-import shutil
-import errno
+import re
 import stat
+import errno
+import shutil
 import itertools
+import wheel.install
 from git import Repo, exc
 
+### DEBUG
+import psutil
+
+from . import pypi
 from .commands import PymCommand
 from .package import PymPackage, PymConfigBuilder, PackageInfo
 from .exceptions import InstallerNotFoundException, VersionNotFoundException, PymPackageException
+
 
 
 class InstallCommand(PymCommand):
@@ -42,7 +49,8 @@ class InstallCommand(PymCommand):
     def make(cls, cli, args, path):
         project = PymPackage.load(path)
         installers = [
-            GitInstaller
+            GitInstaller,
+            PypiInstaller
         ]
         return cls(cli, installers, project)
 
@@ -59,16 +67,18 @@ class InstallCommand(PymCommand):
         install_dir = self.project['install_location']
 
         if install_list:
-            installables = list(itertools.zip_longest([], set(install_list)))
+            references = set(install_list)
+            installables = [self.find_ref_installer(reference) for reference in references]
         else:
-            installables = self.project[self.packages_key].items()
+            references = self.project[self.packages_key].items()
+            installables = [self.find_installer(name, version) for name, version in references]
 
         dest = os.path.join(self.project.location, staging_dir)
 
         packages = []
 
-        for name, reference in installables:
-            packages.append(self.install(reference, dest, save, name))
+        for installer, info in installables:
+            packages.append(self.install(installer, info, dest))
 
         for pkg in packages:
             dest = os.path.join(self.project.location, install_dir, pkg['name'])
@@ -79,10 +89,9 @@ class InstallCommand(PymCommand):
             self.cli.info('Saving to {}'.format(self.project['name']))
             self.project.save()
 
-    def install(self, reference, dest, save=False, name=None):
-        self.cli.info('Installing {}'.format(reference))
-        installer = self.find_installer(name, reference)
-        info = installer.install(reference, dest, name)
+    def install(self, installer, info, dest, save=False):
+        self.cli.info('Installing {}'.format(info.reference))
+        info = installer.install(info, dest)
 
         try:
             new_package = PymPackage.load(info.path)
@@ -112,10 +121,21 @@ class InstallCommand(PymCommand):
             pass
         shutil.move(src, dest)
 
-    def find_installer(self, name, reference):
+    def find_installer(self, name, version):
         try:
-            cls = next(i for i in self.installers if i.can_install(name, reference))
-            return cls(self.cli)
+            for i in self.installers:
+                info = i.can_install(name, version)
+                if info is not None:
+                    return i(self.cli), info
+        except StopIteration as e:
+            raise InstallerNotFoundException('Failed to find an installer for {}'.format(reference)) from e
+
+    def find_ref_installer(self, reference):
+        try:
+            for i in self.installers:
+                info = i.can_install_reference(reference)
+                if info is not None:
+                    return i(self.cli), info
         except StopIteration as e:
             raise InstallerNotFoundException('Failed to find an installer for {}'.format(reference)) from e
 
@@ -134,7 +154,7 @@ class InstallCommand(PymCommand):
 
 class PymInstaller(object):
     @classmethod
-    def can_install(cls, name, reference):
+    def can_install(cls, name, version):
         """
         Checks to see if this installer can install the give name/reference
         :param name: {string} The ostensible name of the package
@@ -143,7 +163,11 @@ class PymInstaller(object):
         """
         raise NotImplemented("Function 'can_install' is not implemented in the base class")
 
-    def install(self, reference, dest, name=None):
+    @classmethod
+    def can_install_reference(cls, reference):
+        raise NotImplemented("Function 'can_install_reference' is not implemented in the base class")
+
+    def install(self, info, dest):
         """
         Install the given reference to the given destination
         :param reference: {string} A package reference
@@ -159,13 +183,23 @@ class PymInstaller(object):
 
 class GitInstaller(PymInstaller):
     @classmethod
-    def can_install(cls, name, reference):
-        source, _, _ = reference.partition('#')
-        return source.endswith('.git') or source.startswith('git+')
+    def can_install(cls, name, version):
+        info  = cls.can_install_reference(version)
+        if info is not None:
+            info.name = name
+        return info
 
-    def install(self, reference, dest, name=None):
-        info = PackageInfo.parse(reference.lstrip('git+'), delim='#')
-        info.name = name or info.name
+    @classmethod
+    def can_install_reference(cls, reference):
+        source, _, _ = reference.partition('#')
+        if source.endswith('.git') or source.startswith('git+'):
+            reference = re.sub(r"^git\+", "", reference)
+            info = PackageInfo.parse(reference, delim='#')
+            info.version_range = 'git+' + info.reference
+            return info
+        return None
+
+    def install(self, info, dest):
         repo = self.clone(info.source, os.path.join(dest, info.name), info.version)
         try:
             version = str(repo.active_branch)
@@ -177,23 +211,14 @@ class GitInstaller(PymInstaller):
         info.update({
             'path': repo.working_dir,
             'description': repo.description,
-            'version': version,
-            'version_range': 'git+' + reference
+            'version': version
         })
         self.remove_git(info.path)
         return info
 
     def remove_git(self, path):
-        def handle_readonly(func, path, exc):
-            excvalue = exc[1]
-            if excvalue.errno == errno.EACCES:
-                os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 0777
-                func(path)
-            else:
-                raise exc[1]
-
         git_dir = os.path.join(path, '.git')
-        shutil.rmtree(git_dir, ignore_errors=False, onerror=handle_readonly)
+        rmdir(git_dir)
 
     def clone(self, source, dest, version):
         repo = Repo.clone_from(source, dest)
@@ -205,6 +230,41 @@ class GitInstaller(PymInstaller):
             except exc.GitCommandError as e:
                 raise VersionNotFoundException('Failed to find version {version}'.format(version=version)) from e
         return repo
+
+
+class PypiInstaller(PymInstaller):
+    @classmethod
+    def can_install(cls, name, version):
+        info = cls.can_install_reference(name)
+        if info is not None:
+            info.version = version
+        return info
+
+    @classmethod
+    def can_install_reference(cls, reference):
+        reference = re.sub(r"^pypi\+", "", reference)
+        info = PackageInfo.parse(reference, delim='@')
+        return info
+
+    def install(self, info, dest):
+        url = pypi.find_download_url(info.name, info.version)
+        wheel_path = pypi.download_file(url, dest)
+        w = wheel.install.WheelFile(wheel_path)
+        package_name, _, version = w.datadir_name.partition('-')
+        version = version.rstrip('.data')
+        dest = os.path.join(dest, package_name)
+
+        wheel_overrides = {'purelib': dest, 'platlib': dest}
+        w.install(force=True, overrides=wheel_overrides)
+        w.zipfile.close()
+        os.remove(wheel_path)
+
+        info.update({
+            'path': dest,
+            'version': version,
+            'version_range': version
+        })
+        return info
 
 
 class UninstallCommand(PymCommand):
@@ -242,5 +302,27 @@ class UninstallCommand(PymCommand):
             except FileNotFoundError as e:
                 self.cli.warn('Failed to uninstall {}. Are you sure the name is spelled correctly?'.format(removable))
             except KeyError as e:
-                self.cli.debug('{} was never saved as a dependency'.format(removable))
+                self.cli.debug('{} was never saved as a dependency, but has been removed'.format(removable))
         self.project.save()
+
+
+class DependencyGraph(object):
+    """
+
+    """
+    def __init__(self, node):
+        """
+
+        :param node:
+        """
+
+
+def rmdir(dirpath):
+    def handle_readonly(func, path, exc):
+        excvalue = exc[1]
+        if excvalue.errno == errno.EACCES:
+            os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)  # 0777
+            func(path)
+        else:
+            raise exc[1]
+    shutil.rmtree(dirpath, ignore_errors=False, onerror=handle_readonly)

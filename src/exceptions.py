@@ -20,3 +20,7 @@ class PymPackageException(Exception):
     """
     Raised when not a PymPackage
     """
+
+class PackageUrlException(Exception):
+    """
+    """
