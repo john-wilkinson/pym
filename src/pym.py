@@ -9,14 +9,14 @@ from . import cli
 
 class PymApp(object):
 
-    def __init__(self, cli):
-        self.cli = cli
+    def __init__(self):
+        self.cli = None
 
     def run(self):
         registry = commands.CommandRegistry()
         args = self.args(registry)
 
-        self.cli.enable_debug = args['debug']
+        self.cli = cli.make(args['debug'])
         location = os.path.realpath(os.path.join(os.getcwd()))
 
         with commands.PymCommandContext(self.cli):
@@ -25,7 +25,7 @@ class PymApp(object):
 
     def args(self, registry):
         parser = argparse.ArgumentParser(prog='pym', description='Manage Python packages.')
-        parser.add_argument('--debug', help='Run with debug output enabled', action='store_false')
+        parser.add_argument('-d', '--debug', help='Run with debug output enabled', action='store_true')
 
         registry.args(parser)
         args = vars(parser.parse_args())
@@ -37,7 +37,7 @@ class PymApp(object):
 
 
 def go():
-    (PymApp(cli.make())).run()
+    (PymApp()).run()
 
 
 if __name__ == "__main__":

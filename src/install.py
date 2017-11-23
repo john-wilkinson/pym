@@ -83,7 +83,11 @@ class InstallCommand(PymCommand):
         for pkg in packages:
             dest = os.path.join(self.project.location, install_dir, pkg['name'])
             self.unstage(pkg, dest)
-            self.cli.success('Successfully installed {}!'.format(pkg['name']))
+            success_message = 'Successfully installed {}'.format(pkg['name'])
+            if pkg['version']:
+                success_message += '@' + pkg['version']
+            success_message += '!'
+            self.cli.success(success_message)
 
         if save:
             self.cli.info('Saving to {}'.format(self.project['name']))

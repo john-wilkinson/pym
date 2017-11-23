@@ -16,10 +16,7 @@ def find_download_url(package_name, version=""):
     :param version:
     :return:
     """
-    print(package_name)
-    print(version)
     url = "{}/{}/{}".format(URL, package_name, version)
-    print(url)
     page = requests.get(url)
     if page.status_code != 200:
         raise exceptions.PackageUrlException('Failed to fetch page {} (status code {})'.format(url, page.status_code))

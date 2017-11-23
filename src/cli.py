@@ -28,7 +28,7 @@ class PymCli(object):
         self.write('error', message, self.err)
 
     def debug(self, message):
-        if not self.debug:
+        if self.enable_debug:
             self.write('debug', message)
 
     def write(self, level, message, stream=None):
@@ -72,11 +72,11 @@ if os.name == 'nt':
             winapi.set_text_attr(Win32Cli.FOREGROUND | Win32Cli.BACKGROUND)
 
 
-def make():
+def make(debug=False):
     if os.name == 'nt':
-        return Win32Cli()
+        return Win32Cli(debug)
     else:
-        return Vt100Cli()
+        return Vt100Cli(debug)
 
 
 class Vt100Cli(PymCli):
