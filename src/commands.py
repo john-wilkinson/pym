@@ -98,7 +98,8 @@ class PymCommandContext(object):
         exceptions.PymPackageException: "Run 'pym init' to create a project here",
         exceptions.InstallerNotFoundException: "Double-check the installation source and version"
                                                "(use '#' for git instead of '@')",
-        exceptions.VersionNotFoundException: "Please check that the version specified exists"
+        exceptions.VersionNotFoundException: "Please check that the version specified exists",
+        exceptions.PackageUrlException: "Please make sure the package and version exist"
     }
 
     def __init__(self, cli):
@@ -108,7 +109,7 @@ class PymCommandContext(object):
         pass
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_val:
+        if exc_val and exc_type in PymCommandContext.ACTIONS:
             self.cli.error(str(exc_val))
             self.cli.action(PymCommandContext.ACTIONS[exc_type])
             sys.exit(2)

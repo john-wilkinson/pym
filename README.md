@@ -13,7 +13,7 @@ To setup pym, clone the repo and run the python setup tool in the cloned repo:
 python setup.py install
 ```
 
-## Create Repo
+## Create Project
 
 To create a pym project, run in the project directory:
 

@@ -16,5 +16,8 @@ setup(
         'console_scripts': [
             'pym = pymcli.pym:go'
         ]
-    }
+    },
+    install_requires=['GitPython',
+                      'wheel'
+                      ]
 )
