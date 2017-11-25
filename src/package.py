@@ -63,7 +63,8 @@ class PackageInfo(dict):
             reference=reference,
             name=name,
             version=version,
-            source=source
+            source=source,
+            dependencies={}
         )
 
     @staticmethod
@@ -89,6 +90,13 @@ class PymPackage(object):
 
     def __setitem__(self, key, value):
         self.config[key] = value
+
+    def __repr__(self):
+        return str({
+            "location": self.location,
+            "config": self.config,
+            "defaults": self.defaults
+        })
 
     def save(self):
         with open(PymPackage.config_path(self.location), "w") as f:

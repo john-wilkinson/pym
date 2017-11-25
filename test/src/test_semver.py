@@ -86,6 +86,38 @@ class TestComparator(unittest.TestCase):
         self.assertEqual(c.operator, '>=')
         self.assertEqual(c.version, semver.Version(4, 5, 6))
 
+    def test_lt(self):
+        c1 = semver.Comparator.parse('<=1.2.3')
+        c2 = semver.Comparator.parse('<=2.3.4')
+        self.assertTrue(c1 < c2)
+
+        c1 = semver.Comparator.parse('<=1.2.3')
+        c2 = semver.Comparator.parse('>2.3.4')
+        self.assertTrue(c1 < c2)
+
+        c1 = semver.Comparator.parse('=1.2.3')
+        c2 = semver.Comparator.parse('>1.0.0')
+        self.assertTrue(c1 < c2)
+
+        c1 = semver.Comparator.parse('=1.0.0')
+        c2 = semver.Comparator.parse('<1.0.0')
+        self.assertFalse(c1 < c2)
+
+        c1 = semver.Comparator.parse('>1.0.0')
+        c2 = semver.Comparator.parse('<1.0.0')
+        self.assertFalse(c1 < c2)
+
+        c1 = semver.Comparator.parse('>1.0.0')
+        c2 = semver.Comparator.parse('<1.1.0')
+        self.assertTrue(c2 < c1)
+
+        c1 = semver.Comparator.parse('>=4.2.3')
+        c2 = semver.Comparator.parse('<3.4.5')
+        self.assertFalse(c1 < c2)
+
+        c1 = semver.Comparator.parse('>4.2.3')
+        c2 = semver.Comparator.parse('>3.4.5')
+        self.assertFalse(c2 < c1)
 
     def test_satisfies(self):
         c = semver.Comparator('=', semver.Version(1, 2, 3))

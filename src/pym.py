@@ -19,8 +19,7 @@ class PymApp(object):
         self.cli = cli.make(args['debug'])
         location = os.path.realpath(os.path.join(os.getcwd()))
 
-        with commands.PymCommandContext(self.cli):
-            cmd = registry.make(args['command'], self.cli, args, location)
+        with commands.PymCommandContext(self.cli, args['command'], args, location) as cmd:
             cmd.run(args)
 
     def args(self, registry):

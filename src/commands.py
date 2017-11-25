@@ -80,7 +80,7 @@ class PymCommand(object):
     def __init__(self, cli):
         """
         Initialize a PymCommand
-        :param log: {logging.PymLogger} A logger instance
+        :param log: {cli.PymClie} Reference to cli object for input and output
         """
         self.cli = cli
 
@@ -92,6 +92,9 @@ class PymCommand(object):
         """
         raise NotImplemented("Method 'run' not implemented in base class")
 
+    def cleanup(self):
+        pass
+
 
 class PymCommandContext(object):
     ACTIONS = {
@@ -102,17 +105,23 @@ class PymCommandContext(object):
         exceptions.PackageUrlException: "Please make sure the package and version exist"
     }
 
-    def __init__(self, cli):
+    def __init__(self, cli, cmd_name, args, location):
         self.cli = cli
+        self.cmd_name = cmd_name
+        self.args = args
+        self.location = location
 
     def __enter__(self):
-        pass
+        registry = CommandRegistry()
+        self.cmd = registry.make(self.cmd_name, self.cli, self.args, self.location)
+        return self.cmd
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_val and exc_type in PymCommandContext.ACTIONS:
             self.cli.error(str(exc_val))
             self.cli.action(PymCommandContext.ACTIONS[exc_type])
             sys.exit(2)
+        self.cmd.cleanup()
 
 
 class InitCommand(PymCommand):

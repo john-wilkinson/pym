@@ -38,6 +38,11 @@ def valid(v):
 
 
 def inc(v, release, identifier=None):
+    """
+    @param v: {string}
+    @param release: {string}
+    @param identifier: {string}
+    """
     version = Version.parse(v)
     version.inc(release, identifier)
     return version
@@ -231,7 +236,11 @@ class Version(object):
         return version_str.strip().lstrip('=v')
 
 
+@total_ordering
 class Comparator(object):
+    """
+    Version Comparator: >3.0.1, <=2.1.17, etc.
+    """
     def __init__(self, operator, version):
         self.operator = operator
         self.version = version
@@ -239,26 +248,46 @@ class Comparator(object):
     def __str__(self):
         return self.operator + str(self.version)
 
+    def __eq__(self, other):
+        return str(self) == str(other)
+
+    def __lt__(self, other):
+        if other.direction == self.direction:
+            if self.direction < 0:
+                return self.version < other.version
+            else:
+                return other.version < self.version
+        else:
+            return other.direction > self.direction
+
     def satisfies(self, version):
         return self.operation(version)
 
     def intersects(self, other):
-        has_intersection = False
-        if self.direction == 0:
-            has_intersection = other.satisfies(self.version)
-        elif other.direction == 0:
-            has_intersection = self.satisfies(other.version)
-        elif self.direction == other.direction:
-            larger, smaller = sorted([self, other], key=lambda comp: comp.version, reverse=self.direction == -1)
-            has_intersection = larger.satisfies(smaller.version)
-        else:
-            has_intersection = self.satisfies(other.version) and other.satisfies(self.version)
-        return has_intersection
+        return self.intersection(other) is not None
+
+    def intersection(self, other):
+        intersection = None
+        if self.direction == 0 and other.satisfies(self.version):
+            intersection = VersionRange(self)
+        elif other.direction == 0 and self.satisfies(other.version):
+            intersection = VersionRange(other)
+        elif (self.direction < 0 and other.direction < 0) or (self.direction >= 0 and other.direction >= 0):
+            smaller, larger = sorted([self, other])
+            if larger.satisfies(smaller.version):
+                intersection = VersionRange(smaller)
+        elif self.satisfies(other.version) and other.satisfies(self.version):
+            smaller, larger = sorted([self, other], reverse=True)
+            intersection = VersionRange(smaller, larger)
+
+        print('Intersection of {} and {} is {}'.format(self, other, intersection))
+
+        return intersection
 
     @property
     def operation(self):
         """
-        The operation map seems backwards for less than/greater than comparisions because we are comparing
+        The operation map seems backwards for less than/greater than comparisons because we are comparing
         as the right side of the equation, not the left.
         :return: {func} The appropriate comparison operation
         """
@@ -274,11 +303,11 @@ class Comparator(object):
     @property
     def direction(self):
         direction_map = {
-            '<': -1,
+            '<': -2,
             '<=': -1,
             '=': 0,
             '>': 1,
-            '>=': 1
+            '>=': 2
         }
         return direction_map[self.operator]
 
@@ -295,7 +324,7 @@ class Comparator(object):
 
 
 class VersionRange(object):
-    def __init__(self, lower, upper):
+    def __init__(self, lower, upper=None):
         self.lower = lower
         self.upper = upper
 
@@ -305,7 +334,22 @@ class VersionRange(object):
         return self.lower.satisfies(item) and (self.upper is None or self.upper.satisfies(item))
 
     def __str__(self):
-        return str(self.lower) + ' ' + str(self.upper)
+        vrange = str(self.lower)
+        if self.upper is not None:
+            vrange += ' ' + str(self.upper)
+        return vrange
+
+    @property
+    def max(self):
+        max_version = None
+        if self.upper is None:
+            if self.lower.operator in ('=', '<='):
+                max_version = self.lower.version
+            elif self.lower.operator in ('>', '>='):
+                max_version = ''
+        elif self.upper.operator == '<=':
+            max_version = self.upper.version
+        return max_version
 
     def is_over(self, version):
         return self.upper is not None and not self.upper.satisfies(version) and self.lower.satisfies(version)
@@ -325,9 +369,32 @@ class VersionRange(object):
 
         return self.upper.intersects(other.lower) and self.lower.intersects(other.upper)
 
+    def intersection(self, other):
+        if self.upper is None and other.upper is None:
+            return self.lower.intersection(other.lower)
+
+        if self.upper is None:
+            return self.lower.intersection(other.upper)
+
+        if other.upper is None:
+            return other.lower.intersects(self.upper) and other.lower.intersects()
+
+        return self.upper.intersects(other.lower) and self.lower.intersects(other.upper)
+
     @staticmethod
     def valid(v):
         pass
+
+    @classmethod
+    def intersection(cls, r1, r2):
+        if r1.upper is None and r2.upper is None:
+            return cls(r1.lower.intersection(r2.lower))
+
+        if r1.upper is None:
+            return r1.lower.intersection(r2.upper)
+
+        if r2.upper is None:
+            return r2.lower if r2.lower in r2 else None
 
     @classmethod
     def parse(cls, v):

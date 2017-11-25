@@ -12,21 +12,27 @@ The install module has the logic for installing the packages
 
 import os
 import re
+import copy
+import json
 import stat
 import errno
 import shutil
+import requests
+import functools
 import itertools
+import collections
 import wheel.install
 from git import Repo, exc
+from bs4 import BeautifulSoup
 
 ### DEBUG
 import psutil
 
 from . import pypi
+from . import semver
 from .commands import PymCommand
 from .package import PymPackage, PymConfigBuilder, PackageInfo
-from .exceptions import InstallerNotFoundException, VersionNotFoundException, PymPackageException
-
+from .exceptions import InstallerNotFoundException, VersionNotFoundException, PymPackageException, PackageUrlException
 
 
 class InstallCommand(PymCommand):
@@ -60,6 +66,11 @@ class InstallCommand(PymCommand):
         self.project = project
         self.packages_key = 'dependencies'
 
+    def cleanup(self):
+        staging_dir = self.project['staging_location']
+        dest = os.path.join(self.project.location, staging_dir)
+        rmdir(dest)
+
     def run(self, args):
         install_list = args['packages']
         save = args['save']
@@ -75,10 +86,31 @@ class InstallCommand(PymCommand):
 
         dest = os.path.join(self.project.location, staging_dir)
 
+        try:
+            os.makedirs(dest)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise
+
         packages = []
 
         for installer, info in installables:
             packages.append(self.install(installer, info, dest))
+
+        dep_graph = DependencyGraph()
+        for package in packages:
+            for dependency, version_range in package.config['dependencies'].items():
+                dep_graph.add(dependency, version_range)
+
+        resolutions = dep_graph.resolve()
+        for name, version_range in resolutions.items():
+            max_version = version_range.max
+            installer, info = self.find_installer(name, str(version_range))
+            info.update({
+                'version': max_version,
+                'version_range': version_range
+            })
+            packages.append(self.install(installer, info, dest, save))
 
         for pkg in packages:
             dest = os.path.join(self.project.location, install_dir, pkg['name'])
@@ -237,6 +269,8 @@ class GitInstaller(PymInstaller):
 
 
 class PypiInstaller(PymInstaller):
+    URL = "https://pypi.python.org/pypi"
+
     @classmethod
     def can_install(cls, name, version):
         info = cls.can_install_reference(name)
@@ -251,24 +285,142 @@ class PypiInstaller(PymInstaller):
         return info
 
     def install(self, info, dest):
-        url = pypi.find_download_url(info.name, info.version)
+        if info.version == None:
+            info.version = self.find_max_version(info.name, info.version_range)
+
+        url = self.find_download_url(info.name, info.version)
         wheel_path = pypi.download_file(url, dest)
         w = wheel.install.WheelFile(wheel_path)
-        package_name, _, version = w.datadir_name.partition('-')
-        version = version.rstrip('.data')
-        dest = os.path.join(dest, package_name)
+
+        package_name = w.parsed_filename.group('name')
+        version = w.parsed_filename.group('ver')
+        dest = os.path.join(dest, package_name.lower())
 
         wheel_overrides = {'purelib': dest, 'platlib': dest}
         w.install(force=True, overrides=wheel_overrides)
+
+        metadata_path = os.path.join(dest, w.distinfo_name, 'metadata.json')
+
+        with open(metadata_path) as f:
+            wheel_info = json.load(f)
+            pkg_deps = self.parse_requires(wheel_info.get('run_requires'))
+            info.update({'dependencies': pkg_deps})
+
         w.zipfile.close()
         os.remove(wheel_path)
 
         info.update({
             'path': dest,
             'version': version,
-            'version_range': version
+            'version_range': '^' + version
         })
         return info
+
+    def find_max_version(self, package_name, version_range):
+        """
+        """
+        previous = version_range.lower.version
+        segments = ['major', 'minor', 'patch']
+        seg_idx = 0
+        current = copy.copy(previous)
+        while seg_idx < len(segments):
+            current.inc(segments[seg_idx])
+            page = self.find_existing_page(package_name, current)
+            if current not in version_range or page is None:
+                current = copy.copy(previous)
+                seg_idx += 1
+            else:
+                previous = copy.copy(current)
+        return previous
+
+    def find_existing_page(self, package_name, version):
+        url = "{}/{}/{}".format(self.URL, package_name, version)
+        page = requests.get(url)
+        # Because pypi does not strictly enforce semver on packages, we end up with some packages that just leave of version segments
+        while page.status_code != 200 and url.endswith('.0'):
+            url = url.rstrip('.0')
+            page = requests.get(url)
+        if page.status_code != 200:
+            page = None
+
+        return page
+
+
+    def find_download_url(self, package_name, version=""):
+        """
+
+        :param pacakge_name:
+        :param version:
+        :return:
+        """
+        page = self.find_existing_page(package_name, version)
+        if page is None:
+            raise PackageUrlException('Failed to fetch page for {}@{}'.format(package_name, version))
+        soup = BeautifulSoup(page.content, 'html.parser')
+        for link in soup.select('body a'):
+            if link.string and link.string.endswith('.whl'):
+                return link['href']
+        raise PackageUrlException('Failed to find package for {}@{}'.format(package_name, version))
+
+    def parse_requires(self, wheel_requires):
+        """
+        Ex: [
+                {
+                    "extra":"socks",
+                    "requires": [
+                        "PySocks (!=1.5.7,>=1.5.6)"
+                    ]
+                },
+                {
+                    "requires": [
+                        "certifi (>=2017.4.17)",
+                        "chardet (>=3.0.2,<3.1.0)",
+                        "idna (>=2.5,<2.7)",
+                        "urllib3 (<1.23,>=1.21.1)"
+                    ]
+                },
+                {
+                    "extra":"security",
+                    "requires": [
+                        "cryptography (>=1.3.4)",
+                        "idna (>=2.0.0)",
+                        "pyOpenSSL (>=0.14)"
+                    ]
+                },
+                {
+                    "environment":"sys_platform == \"win32\" and (python_version == \"2.7\" or python_version == \"2.6\")",
+                    "extra":"socks",
+                    "requires":[
+                        "win-inet-pton"
+                    ]
+                }
+            ]
+        """
+        wheel_requires = wheel_requires or []
+        dependencies = {}
+        for elem in wheel_requires:
+            if elem.get('extra') is None and elem.get('environment') is None:
+                requires = elem['requires']
+                for requirement in requires:
+                    package, _, version_range = requirement.partition(' ')
+                    if not version_range:
+                        version_range = '*'
+                    else:
+                        version_range = version_range.strip('()')
+                        start, _, end = version_range.partition(',')
+                        try:
+                            if end:
+                                upper, lower = sorted([semver.Comparator.parse(start), semver.Comparator.parse(end)])
+                            else:
+                                lower, upper = semver.Comparator.parse(start), None
+
+                            version_range = semver.VersionRange(lower, upper)
+                        except semver.VersionParseException as e:
+                            self.cli.warn('Non-semantic version {}'.format(start))
+                            version_range = start
+                    dependencies[package] = str(version_range)
+
+        return dependencies
 
 
 class UninstallCommand(PymCommand):
@@ -314,11 +466,23 @@ class DependencyGraph(object):
     """
 
     """
-    def __init__(self, node):
+    def __init__(self):
         """
+        """
+        self.dependencies = collections.defaultdict(list)
 
-        :param node:
+    def add(self, name, version_range):
         """
+        """
+        self.dependencies[name].append(semver.VersionRange.parse(version_range))
+
+    def resolve(self):
+        resolutions = {}
+
+        for name, ranges in self.dependencies.items():
+            accepted_range = functools.reduce(lambda a, r: a.intersection(r), ranges)
+            resolutions[name] = accepted_range
+        return resolutions
 
 
 def rmdir(dirpath):
