@@ -5,6 +5,8 @@ Pym is very similar to Npm in behavior.
 
 When you install packages, by default it puts them under a `pym_packages` directory in your project repository.
 
+![](https://raw.githubusercontent.com/john-wilkinson/pym/master/docs/usage.gif)
+
 ## Setup
 
 To setup pym, clone the repo and run the python setup tool in the cloned repo:
@@ -25,13 +27,23 @@ This creates a `pym.json` file acting as your project manifest in your current d
 
 ## Install Packages
 
-To install packages (only git is supported right now):
+To install packages (only git and wheels are supported right now):
+
+```
+pym install tornado
+```
 
 ```
 pym install https://github.com/tornadoweb/tornado.git
 ```
 
-A particular tag, checkout, or branch can be specified by putting a `#` with the modifier after the repo url.
+For pypi, a particular version can be specified by using `@<version>`
+
+```
+pym install tornado@4.5.2
+```
+
+For git, particular tag, checkout, or branch can be specified by putting a `#` with the modifier after the repo url.
 
 ```
 pym install https://github.com/tornadoweb/tornado.git#v4.5.2
