@@ -1,3 +1,7 @@
+# Not Functional
+
+As wheel packaging has changed since this was written, and the pypi package locations have also moved, this project is not currently functional.
+
 # pym
 A python package manager for creating and using local-scoped packages
 
